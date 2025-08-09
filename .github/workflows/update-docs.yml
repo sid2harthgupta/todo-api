@@ -5,6 +5,8 @@ on:
     paths:
       - 'src/**/*.py'
       - 'pyproject.toml'
+      - '.github/workflows/update-docs.yml'  # Trigger when workflow itself changes
+  workflow_dispatch:  # Allow manual triggering for testing
 
 jobs:
   update-docs:
@@ -12,8 +14,6 @@ jobs:
     steps:
       - name: Checkout API repository
         uses: actions/checkout@v3
-        with:
-          path: api
 
       - name: Checkout docs repository
         uses: actions/checkout@v3
@@ -28,38 +28,83 @@ jobs:
           python-version: '3.13'
 
       - name: Install dependencies
-        working-directory: api
         run: |
           pip install fastapi uvicorn
 
-      - name: Generate OpenAPI spec
-        working-directory: api
+      - name: Create necessary directories
         run: |
-          cd src/todo_api
-          python -c "
-          import json
-          from main import app
-          
-          # Generate OpenAPI spec
-          spec = app.openapi()
-          
-          # Write to docs repo
-          with open('../../docs/api-reference/openapi-todo.json', 'w') as f:
-              json.dump(spec, f, indent=2)
-          "
+          mkdir -p docs/api-reference/todo
 
-      - name: Update API reference pages
-        working-directory: docs
+      - name: Generate OpenAPI spec
         run: |
-          # Create or update API endpoint pages
-          cat > api-reference/todo/get-todo.mdx << 'EOF'
+          python -c "
+import json
+import sys
+import os
+
+# Add the src/todo_api directory to Python path
+sys.path.insert(0, 'src/todo_api')
+
+from main import app
+
+# Generate OpenAPI spec
+spec = app.openapi()
+
+# Update the spec with proper info
+spec['info']['title'] = 'Todo API'
+spec['info']['version'] = '1.0.0'
+spec['servers'] = [
+    {'url': 'https://api.example.com'},
+    {'url': 'http://localhost:8000'}
+]
+
+# Write to docs repo (from workspace root)
+output_path = 'docs/api-reference/openapi-todo.json'
+with open(output_path, 'w') as f:
+    json.dump(spec, f, indent=2)
+
+print(f'OpenAPI spec generated successfully at {output_path}')
+"
+
+      - name: Create API reference pages
+        run: |
+          # Create introduction page
+          cat > docs/api-reference/todo/introduction.mdx << 'EOF'
+          ---
+          title: 'Todo API'
+          description: 'API endpoints for managing todos'
+          ---
+          
+          ## Base URL
+          
+          ```
+          https://api.example.com
+          ```
+          
+          ## Authentication
+          
+          The Todo API currently does not require authentication.
+          
+          ## Available Endpoints
+          
+          <Card title="Get Todo" icon="search" href="/api-reference/todo/get-todo">
+            Retrieve a todo by its ID
+          </Card>
+          
+          <Card title="Create Todo" icon="plus" href="/api-reference/todo/create-todo">
+            Create a new todo item
+          </Card>
+          EOF
+          
+          # Create endpoint pages
+          cat > docs/api-reference/todo/get-todo.mdx << 'EOF'
           ---
           title: 'Get Todo'
           openapi: 'GET /todos/{todo_id}'
           ---
           EOF
-
-          cat > api-reference/todo/create-todo.mdx << 'EOF'
+          
+          cat > docs/api-reference/todo/create-todo.mdx << 'EOF'
           ---
           title: 'Create Todo'
           openapi: 'POST /todos'
@@ -67,59 +112,97 @@ jobs:
           EOF
 
       - name: Update docs.json navigation
-        working-directory: docs
         run: |
+          cd docs
           python -c "
-          import json
-          
-          # Read current docs.json
-          with open('docs.json', 'r') as f:
-              config = json.load(f)
-          
-          # Find API reference tab
-          for tab in config['navigation']['tabs']:
-              if tab['tab'] == 'API reference':
-                  # Check if Todo API group exists
-                  todo_group_exists = False
-                  for group in tab['groups']:
-                      if group['group'] == 'Todo API':
-                          todo_group_exists = True
-                          # Update pages if needed
-                          group['pages'] = [
-                              'api-reference/todo/get-todo',
-                              'api-reference/todo/create-todo'
-                          ]
-                          break
-                  
-                  # Add Todo API group if it doesn't exist
-                  if not todo_group_exists:
-                      tab['groups'].append({
-                          'group': 'Todo API',
-                          'pages': [
-                              'api-reference/todo/get-todo',
-                              'api-reference/todo/create-todo'
-                          ]
-                      })
-                  break
-          
-          # Write updated docs.json
-          with open('docs.json', 'w') as f:
-              json.dump(config, f, indent=2)
-          "
+import json
+
+# Read current docs.json
+with open('docs.json', 'r') as f:
+    config = json.load(f)
+
+# Update OpenAPI specification path
+# Handle both string and array formats
+current_openapi = config.get('openapi', [])
+if isinstance(current_openapi, str):
+    # Convert single string to array
+    config['openapi'] = [current_openapi, 'api-reference/openapi-todo.json']
+elif isinstance(current_openapi, list):
+    # Add our spec if not already there
+    if 'api-reference/openapi-todo.json' not in current_openapi:
+        config['openapi'] = current_openapi + ['api-reference/openapi-todo.json']
+else:
+    # No openapi config yet
+    config['openapi'] = ['api-reference/openapi.json', 'api-reference/openapi-todo.json']
+
+# Find or create API reference tab
+api_tab = None
+for tab in config['navigation']['tabs']:
+    if tab['tab'] == 'API reference':
+        api_tab = tab
+        break
+
+if api_tab:
+    # Check if Todo API group exists
+    todo_group_exists = False
+    for group in api_tab['groups']:
+        if group['group'] == 'Todo API':
+            todo_group_exists = True
+            # Update pages
+            group['pages'] = [
+                'api-reference/todo/introduction',
+                'api-reference/todo/get-todo',
+                'api-reference/todo/create-todo'
+            ]
+            break
+
+    # Add Todo API group if it doesn't exist
+    if not todo_group_exists:
+        # Insert after the first group
+        api_tab['groups'].insert(1, {
+            'group': 'Todo API',
+            'pages': [
+                'api-reference/todo/introduction',
+                'api-reference/todo/get-todo',
+                'api-reference/todo/create-todo'
+            ]
+        })
+
+# Write updated docs.json with proper formatting
+with open('docs.json', 'w') as f:
+    json.dump(config, f, indent=2)
+
+print('docs.json updated successfully')
+"
 
       - name: Configure git
-        working-directory: docs
         run: |
+          cd docs
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Commit and push changes
-        working-directory: docs
+      - name: Check changes
         run: |
+          cd docs
+          echo "Files changed:"
+          git status --short
+
+      - name: Commit and push changes
+        run: |
+          cd docs
           git add .
+          
+          # Check if there are changes
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "Auto-update API documentation from todo-api"
+            # Commit and push
+            git commit -m "Auto-update API documentation from todo-api
+            
+            - Updated OpenAPI specification
+            - Generated endpoint documentation pages
+            - Updated navigation structure"
+            
             git push origin main
+            echo "Documentation updated successfully"
           fi
