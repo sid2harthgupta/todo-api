@@ -1,29 +1,142 @@
-name: Publish OpenAPI Spec
+name: Update API Documentation
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/todo_api/**/*.py'
+      - 'pyproject.toml'
 
 jobs:
-  publish:
+  update-docs:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout API repository
+        uses: actions/checkout@v4
+        with:
+          path: api
+
+      - name: Checkout docs repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/docs
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: docs
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
       - name: Install dependencies
+        working-directory: api
         run: |
-          pip install fastapi uvicorn
+          pip install uv
+          uv sync
+          uv pip install pyyaml
 
       - name: Generate OpenAPI spec
+        working-directory: api
         run: |
-          python -c "import json; from main import app; print(json.dumps(app.openapi(), indent=2))" > openapi.json
+          cat > generate_openapi.py << 'EOF'
+          import json
+          import sys
+          import os
+          sys.path.insert(0, 'src')
+          from todo_api.main import app
+          
+          openapi_spec = app.openapi()
+          # Add servers configuration for Mintlify
+          openapi_spec["servers"] = [
+              {"url": "http://localhost:8000", "description": "Local development server"},
+              {"url": "https://api.example.com", "description": "Production server"}
+          ]
+          
+          with open("../docs/api-reference/openapi.json", "w") as f:
+              json.dump(openapi_spec, f, indent=2)
+          EOF
+          
+          uv run python generate_openapi.py
 
-      - name: Upload OpenAPI spec
-        uses: actions/upload-artifact@v3
+      - name: Generate API endpoint pages
+        working-directory: api
+        run: |
+          cat > generate_endpoint_docs.py << 'EOF'
+          import json
+          import os
+          import sys
+          sys.path.insert(0, 'src')
+          from todo_api.main import app
+          from pathlib import Path
+          
+          # Load OpenAPI spec
+          openapi_spec = app.openapi()
+          
+          # Create endpoint MDX files
+          docs_dir = Path("../docs/api-reference/endpoints")
+          docs_dir.mkdir(exist_ok=True)
+          
+          for path, path_item in openapi_spec.get("paths", {}).items():
+              for method, operation in path_item.items():
+                  if method in ["get", "post", "put", "delete", "patch"]:
+                      # Create filename from path and method
+                      filename = f"{method}-{path.replace('/', '-').strip('-')}.mdx"
+                      filepath = docs_dir / filename
+                      
+                      # Generate MDX content
+                      title = operation.get("summary", f"{method.upper()} {path}")
+                      mdx_content = f"""---
+          title: '{title}'
+          openapi: '{method.upper()} {path}'
+          ---
+          """
+                      
+                      with open(filepath, "w") as f:
+                          f.write(mdx_content)
+          
+          print(f"Generated {len(list(docs_dir.glob('*.mdx')))} endpoint documentation files")
+          EOF
+          
+          uv run python generate_endpoint_docs.py
+
+      - name: Check for changes
+        id: check_changes
+        working-directory: docs
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Pull Request
+        if: steps.check_changes.outputs.changes == 'true'
+        uses: peter-evans/create-pull-request@v6
         with:
-          name: openapi-spec
-          path: openapi.json
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: docs
+          commit-message: "docs: update API documentation from todo-api"
+          title: "[Auto] Update API Documentation"
+          body: |
+            ## 🤖 Automated API Documentation Update
+            
+            This PR updates the API documentation based on changes in the todo-api repository.
+            
+            ### Changes
+            - Updated OpenAPI specification
+            - Regenerated endpoint documentation pages
+            
+            ### Source
+            Triggered by: ${{ github.event.head_commit.message }}
+            Commit: ${{ github.sha }}
+          branch: auto-update-api-docs-${{ github.run_number }}
+          delete-branch: true
+          labels: |
+            documentation
+            automated
