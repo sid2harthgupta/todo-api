@@ -37,34 +37,36 @@ jobs:
 
       - name: Generate OpenAPI spec
         run: |
-          python -c "
-import json
-import sys
-import os
-
-# Add the src/todo_api directory to Python path
-sys.path.insert(0, 'src/todo_api')
-
-from main import app
-
-# Generate OpenAPI spec
-spec = app.openapi()
-
-# Update the spec with proper info
-spec['info']['title'] = 'Todo API'
-spec['info']['version'] = '1.0.0'
-spec['servers'] = [
-    {'url': 'https://api.example.com'},
-    {'url': 'http://localhost:8000'}
-]
-
-# Write to docs repo (from workspace root)
-output_path = 'docs/api-reference/openapi-todo.json'
-with open(output_path, 'w') as f:
-    json.dump(spec, f, indent=2)
-
-print(f'OpenAPI spec generated successfully at {output_path}')
-"
+          cat > generate_openapi.py << 'SCRIPT_END'
+          import json
+          import sys
+          import os
+          
+          # Add the src/todo_api directory to Python path
+          sys.path.insert(0, 'src/todo_api')
+          
+          from main import app
+          
+          # Generate OpenAPI spec
+          spec = app.openapi()
+          
+          # Update the spec with proper info
+          spec['info']['title'] = 'Todo API'
+          spec['info']['version'] = '1.0.0'
+          spec['servers'] = [
+              {'url': 'https://api.example.com'},
+              {'url': 'http://localhost:8000'}
+          ]
+          
+          # Write to docs repo (from workspace root)
+          output_path = 'docs/api-reference/openapi-todo.json'
+          with open(output_path, 'w') as f:
+              json.dump(spec, f, indent=2)
+          
+          print(f'OpenAPI spec generated successfully at {output_path}')
+          SCRIPT_END
+          
+          python generate_openapi.py
 
       - name: Create API reference pages
         run: |
@@ -113,67 +115,68 @@ print(f'OpenAPI spec generated successfully at {output_path}')
 
       - name: Update docs.json navigation
         run: |
-          cd docs
-          python -c "
-import json
-
-# Read current docs.json
-with open('docs.json', 'r') as f:
-    config = json.load(f)
-
-# Update OpenAPI specification path
-# Handle both string and array formats
-current_openapi = config.get('openapi', [])
-if isinstance(current_openapi, str):
-    # Convert single string to array
-    config['openapi'] = [current_openapi, 'api-reference/openapi-todo.json']
-elif isinstance(current_openapi, list):
-    # Add our spec if not already there
-    if 'api-reference/openapi-todo.json' not in current_openapi:
-        config['openapi'] = current_openapi + ['api-reference/openapi-todo.json']
-else:
-    # No openapi config yet
-    config['openapi'] = ['api-reference/openapi.json', 'api-reference/openapi-todo.json']
-
-# Find or create API reference tab
-api_tab = None
-for tab in config['navigation']['tabs']:
-    if tab['tab'] == 'API reference':
-        api_tab = tab
-        break
-
-if api_tab:
-    # Check if Todo API group exists
-    todo_group_exists = False
-    for group in api_tab['groups']:
-        if group['group'] == 'Todo API':
-            todo_group_exists = True
-            # Update pages
-            group['pages'] = [
-                'api-reference/todo/introduction',
-                'api-reference/todo/get-todo',
-                'api-reference/todo/create-todo'
-            ]
-            break
-
-    # Add Todo API group if it doesn't exist
-    if not todo_group_exists:
-        # Insert after the first group
-        api_tab['groups'].insert(1, {
-            'group': 'Todo API',
-            'pages': [
-                'api-reference/todo/introduction',
-                'api-reference/todo/get-todo',
-                'api-reference/todo/create-todo'
-            ]
-        })
-
-# Write updated docs.json with proper formatting
-with open('docs.json', 'w') as f:
-    json.dump(config, f, indent=2)
-
-print('docs.json updated successfully')
-"
+          cat > update_navigation.py << 'SCRIPT_END'
+          import json
+          
+          # Read current docs.json
+          with open('docs/docs.json', 'r') as f:
+              config = json.load(f)
+          
+          # Update OpenAPI specification path
+          # Handle both string and array formats
+          current_openapi = config.get('openapi', [])
+          if isinstance(current_openapi, str):
+              # Convert single string to array
+              config['openapi'] = [current_openapi, 'api-reference/openapi-todo.json']
+          elif isinstance(current_openapi, list):
+              # Add our spec if not already there
+              if 'api-reference/openapi-todo.json' not in current_openapi:
+                  config['openapi'] = current_openapi + ['api-reference/openapi-todo.json']
+          else:
+              # No openapi config yet
+              config['openapi'] = ['api-reference/openapi.json', 'api-reference/openapi-todo.json']
+          
+          # Find or create API reference tab
+          api_tab = None
+          for tab in config['navigation']['tabs']:
+              if tab['tab'] == 'API reference':
+                  api_tab = tab
+                  break
+          
+          if api_tab:
+              # Check if Todo API group exists
+              todo_group_exists = False
+              for group in api_tab['groups']:
+                  if group['group'] == 'Todo API':
+                      todo_group_exists = True
+                      # Update pages
+                      group['pages'] = [
+                          'api-reference/todo/introduction',
+                          'api-reference/todo/get-todo',
+                          'api-reference/todo/create-todo'
+                      ]
+                      break
+              
+              # Add Todo API group if it doesn't exist
+              if not todo_group_exists:
+                  # Insert after the first group
+                  api_tab['groups'].insert(1, {
+                      'group': 'Todo API',
+                      'pages': [
+                          'api-reference/todo/introduction',
+                          'api-reference/todo/get-todo',
+                          'api-reference/todo/create-todo'
+                      ]
+                  })
+          
+          # Write updated docs.json with proper formatting
+          with open('docs/docs.json', 'w') as f:
+              json.dump(config, f, indent=2)
+          
+          print('docs.json updated successfully')
+          SCRIPT_END
+          
+          python update_navigation.py
 
       - name: Configure git
         run: |
