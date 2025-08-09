@@ -22,8 +22,8 @@ jobs:
       - name: Checkout docs repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/docs
-          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: sid2harthgupta/docs
+          token: ${{ secrets.DOCS_PUSH_TOKEN }}
           path: docs
 
       - name: Setup Python
