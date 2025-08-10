@@ -23,7 +23,7 @@ jobs:
       - name: Install API
         run: |
           pip install uv
-          uv pip install -e .
+          uv pip install --system -e .
 
       - name: Generate OpenAPI spec
         run: |
