@@ -14,7 +14,7 @@ def get_todo(todo_id: int):
 
 @app.post("/todos")
 def create_todo(todo: Todo):
-    """Create a new to-do"""
+    """Create a new to-do."""
     return todo
 
 @app.delete("/todos/{todo_id}")
