@@ -1,5 +1,4 @@
 name: Update API Documentation
-
 on:
   push:
     branches: [main]
@@ -10,30 +9,86 @@ on:
 jobs:
   update-docs:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout API repository
-        uses: actions/checkout@v4
+      - name: Checkout todo-api
+        uses: actions/checkout@v3
+        with:
+          path: todo-api
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.13'
 
-      - name: Install API
+      - name: Install dependencies
+        working-directory: todo-api
         run: |
-          pip install uv
-          uv pip install --system -e .
+          pip install fastapi
 
-      - name: Generate OpenAPI spec
+      - name: Create generation script
         run: |
-          python -c "
+          cat > generate_docs.py << 'EOF'
           import json
-          from src.todo_api.main import app
+          import sys
+          import os
           
+          # Add source to path
+          sys.path.insert(0, 'todo-api/src')
+          from todo_api.main import app
+          
+          # Generate OpenAPI schema
+          openapi_schema = app.openapi()
+          
+          # Save OpenAPI spec
           with open('openapi.json', 'w') as f:
-              json.dump(app.openapi(), f, indent=2)
-          "
+              json.dump(openapi_schema, f, indent=2)
+          
+          # Create endpoint MDX files
+          os.makedirs('endpoint-files', exist_ok=True)
+          
+          # Map of endpoints to generate
+          endpoints = []
+          endpoint_mapping = {
+              'get': {'filename': 'get-todo.mdx', 'title': 'Get Todo'},
+              'post': {'filename': 'create-todo.mdx', 'title': 'Create Todo'},
+              'delete': {'filename': 'delete-todo.mdx', 'title': 'Delete Todo'},
+              'put': {'filename': 'update-todo.mdx', 'title': 'Update Todo'},
+              'patch': {'filename': 'patch-todo.mdx', 'title': 'Patch Todo'}
+          }
+          
+          for path, methods in openapi_schema['paths'].items():
+              for method, details in methods.items():
+                  method_lower = method.lower()
+                  if method_lower in endpoint_mapping:
+                      filename = endpoint_mapping[method_lower]['filename']
+                      title = endpoint_mapping[method_lower]['title']
+                      
+                      # Override title if summary exists
+                      if 'summary' in details:
+                          title = details['summary']
+                      
+                      # Create MDX content
+                      mdx_content = f"""---
+          title: '{title}'
+          openapi: '{method.upper()} {path}'
+          ---
+          """
+                      
+                      # Write MDX file
+                      with open(f'endpoint-files/{filename}', 'w') as f:
+                          f.write(mdx_content)
+                      
+                      endpoints.append({
+                          'file': f'api-reference/endpoint/{filename[:-4]}',
+                          'title': title
+                      })
+          
+          print('Generated endpoint files:', endpoints)
+          print('OpenAPI spec generated successfully')
+          EOF
+
+      - name: Generate OpenAPI and endpoint files
+        run: python generate_docs.py
 
       - name: Checkout docs repository
         uses: actions/checkout@v4
@@ -42,17 +97,36 @@ jobs:
           token: ${{ secrets.DOCS_PUSH_TOKEN }}
           path: docs
 
-      - name: Update OpenAPI spec
+      - name: Update documentation
         run: |
+          # Copy OpenAPI spec
           cp openapi.json docs/api-reference/openapi.json
+          
+          # Copy endpoint files
+          mkdir -p docs/api-reference/endpoint
+          cp endpoint-files/*.mdx docs/api-reference/endpoint/
+          
+          # List what was updated
+          echo "Updated files:"
+          ls -la docs/api-reference/openapi.json
+          ls -la docs/api-reference/endpoint/
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.DOCS_PUSH_TOKEN }}
           path: docs
-          commit-message: 'chore: update OpenAPI specification'
+          commit-message: 'chore: update API documentation'
+          branch: update-api-docs-${{ github.sha }}
           title: '📚 Update API Documentation'
-          body: 'Updates OpenAPI spec from todo-api@${{ github.sha }}'
-          branch: update-api-docs-${{ github.run_number }}
-          delete-branch: true
+          body: |
+            ## Automated API Documentation Update
+            
+            This PR updates the API documentation based on changes in the todo-api repository.
+            
+            ### Changes:
+            - Updated `/api-reference/openapi.json`
+            - Generated/updated endpoint MDX files
+            
+            ### Source commit: ${{ github.sha }}
+          base: main
