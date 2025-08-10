@@ -25,14 +25,14 @@ jobs:
         run: |
           pip install fastapi
 
-      - name: Create generation script
+      - name: Create documentation generation script
         run: |
           cat > generate_docs.py << 'EOF'
           import json
           import sys
           import os
+          from pathlib import Path
           
-          # Add source to path
           sys.path.insert(0, 'todo-api/src')
           from todo_api.main import app
           
@@ -46,45 +46,58 @@ jobs:
           # Create endpoint MDX files
           os.makedirs('endpoint-files', exist_ok=True)
           
-          # Map of endpoints to generate
-          endpoints = []
-          endpoint_mapping = {
-              'get': {'filename': 'get-todo.mdx', 'title': 'Get Todo'},
-              'post': {'filename': 'create-todo.mdx', 'title': 'Create Todo'},
-              'delete': {'filename': 'delete-todo.mdx', 'title': 'Delete Todo'},
-              'put': {'filename': 'update-todo.mdx', 'title': 'Update Todo'},
-              'patch': {'filename': 'patch-todo.mdx', 'title': 'Patch Todo'}
-          }
+          # Track generated files for navigation update
+          generated_files = []
           
-          for path, methods in openapi_schema['paths'].items():
+          for path, methods in openapi_schema.get('paths', {}).items():
               for method, details in methods.items():
-                  method_lower = method.lower()
-                  if method_lower in endpoint_mapping:
-                      filename = endpoint_mapping[method_lower]['filename']
-                      title = endpoint_mapping[method_lower]['title']
-                      
-                      # Override title if summary exists
-                      if 'summary' in details:
-                          title = details['summary']
-                      
-                      # Create MDX content
-                      mdx_content = f"""---
+                  # Generate filename based on operation
+                  operation_id = details.get('operationId', '')
+                  summary = details.get('summary', '')
+                  
+                  # Create appropriate filename
+                  if 'get' in method.lower():
+                      if '{' in path:  # Has path parameter
+                          filename = 'get-todo.mdx'
+                      else:
+                          filename = 'list-todos.mdx'
+                  elif 'post' in method.lower():
+                      filename = 'create-todo.mdx'
+                  elif 'delete' in method.lower():
+                      filename = 'delete-todo.mdx'
+                  elif 'put' in method.lower():
+                      filename = 'update-todo.mdx'
+                  elif 'patch' in method.lower():
+                      filename = 'patch-todo.mdx'
+                  else:
+                      continue
+                  
+                  # Use summary as title or generate from method
+                  title = summary if summary else f"{method.title()} {path}"
+                  
+                  # Create MDX content
+                  mdx_content = f"""---
           title: '{title}'
           openapi: '{method.upper()} {path}'
           ---
           """
-                      
-                      # Write MDX file
-                      with open(f'endpoint-files/{filename}', 'w') as f:
-                          f.write(mdx_content)
-                      
-                      endpoints.append({
-                          'file': f'api-reference/endpoint/{filename[:-4]}',
-                          'title': title
-                      })
+                  
+                  # Write MDX file
+                  with open(f'endpoint-files/{filename}', 'w') as f:
+                      f.write(mdx_content)
+                  
+                  generated_files.append({
+                      'filename': filename,
+                      'title': title,
+                      'method': method.upper(),
+                      'path': path
+                  })
           
-          print('Generated endpoint files:', endpoints)
-          print('OpenAPI spec generated successfully')
+          # Save metadata for navigation update
+          with open('generated-files.json', 'w') as f:
+              json.dump(generated_files, f, indent=2)
+          
+          print(f'Generated {len(generated_files)} endpoint files')
           EOF
 
       - name: Generate OpenAPI and endpoint files
@@ -97,7 +110,7 @@ jobs:
           token: ${{ secrets.DOCS_PUSH_TOKEN }}
           path: docs
 
-      - name: Update documentation
+      - name: Update documentation files
         run: |
           # Copy OpenAPI spec
           cp openapi.json docs/api-reference/openapi.json
@@ -105,18 +118,87 @@ jobs:
           # Copy endpoint files
           mkdir -p docs/api-reference/endpoint
           cp endpoint-files/*.mdx docs/api-reference/endpoint/
+
+      - name: Update navigation in docs.json
+        working-directory: docs
+        run: |
+          python - << 'EOF'
+          import json
+          import os
+          from pathlib import Path
+          import re
           
-          # List what was updated
-          echo "Updated files:"
-          ls -la docs/api-reference/openapi.json
-          ls -la docs/api-reference/endpoint/
+          def extract_title_from_mdx(file_path):
+              """Extract title from MDX frontmatter."""
+              try:
+                  with open(file_path, 'r') as f:
+                      content = f.read()
+                      match = re.search(r"^title:\s*['\"](.+?)['\"]", content, re.MULTILINE)
+                      if match:
+                          return match.group(1)
+              except:
+                  pass
+              filename = Path(file_path).stem
+              return filename.replace('-', ' ').title()
+          
+          # Get all endpoint files
+          endpoint_dir = 'api-reference/endpoint'
+          endpoint_files = []
+          
+          if os.path.exists(endpoint_dir):
+              for file in sorted(os.listdir(endpoint_dir)):
+                  if file.endswith('.mdx'):
+                      file_path = os.path.join(endpoint_dir, file)
+                      title = extract_title_from_mdx(file_path)
+                      nav_path = f"api-reference/endpoint/{file[:-4]}"
+                      endpoint_files.append(nav_path)
+          
+          if not endpoint_files:
+              print("No endpoint files found")
+              exit(0)
+          
+          # Read docs.json
+          with open('docs.json', 'r') as f:
+              docs_config = json.load(f)
+          
+          # Find API reference tab
+          api_tab = None
+          for tab in docs_config.get('navigation', {}).get('tabs', []):
+              if tab.get('tab') == 'API reference':
+                  api_tab = tab
+                  break
+          
+          if api_tab:
+              # Find or create endpoints group
+              endpoints_group = None
+              for group in api_tab.get('groups', []):
+                  if 'endpoint' in group.get('group', '').lower():
+                      endpoints_group = group
+                      break
+              
+              if endpoints_group:
+                  # Update pages
+                  endpoints_group['pages'] = endpoint_files
+                  print(f"Updated navigation with {len(endpoint_files)} endpoints")
+              else:
+                  # Create new group
+                  api_tab['groups'].append({
+                      "group": "API Endpoints",
+                      "pages": endpoint_files
+                  })
+                  print(f"Created new group with {len(endpoint_files)} endpoints")
+              
+              # Save updated docs.json
+              with open('docs.json', 'w') as f:
+                  json.dump(docs_config, f, indent=2)
+          EOF
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.DOCS_PUSH_TOKEN }}
           path: docs
-          commit-message: 'chore: update API documentation'
+          commit-message: 'chore: update API documentation and navigation'
           branch: update-api-docs-${{ github.sha }}
           title: '📚 Update API Documentation'
           body: |
@@ -125,8 +207,9 @@ jobs:
             This PR updates the API documentation based on changes in the todo-api repository.
             
             ### Changes:
-            - Updated `/api-reference/openapi.json`
-            - Generated/updated endpoint MDX files
+            - ✅ Updated `/api-reference/openapi.json`
+            - ✅ Generated/updated endpoint MDX files
+            - ✅ Updated navigation in `docs.json`
             
             ### Source commit: ${{ github.sha }}
           base: main

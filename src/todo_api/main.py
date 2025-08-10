@@ -9,15 +9,15 @@ class Todo(BaseModel):
 
 @app.get("/todos/{todo_id}")
 def get_todo(todo_id: int):
-    """Get a to-do by ID"""
+    """Get a to-do by ID."""
     return {"id": todo_id, "title": "Sample"}
 
 @app.post("/todos")
 def post_todo(todo: Todo):
-    """Create a new to-do"""
+    """Create a new to-do."""
     return todo
 
 @app.delete("/todos/{todo_id}")
 def delete_todo(todo_id: int):
-    """Delete a to-do by ID"""
+    """Delete a to-do by ID."""
     return {"message": f"Todo {todo_id} deleted successfully"}
