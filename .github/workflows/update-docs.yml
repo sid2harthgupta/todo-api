@@ -59,7 +59,7 @@ jobs:
           ]
           
           # Write to docs repo (from workspace root)
-          output_path = 'docs/api-reference/openapi-todo.json'
+          output_path = 'docs/api-reference/openapi.json'
           with open(output_path, 'w') as f:
               json.dump(spec, f, indent=2)
           
@@ -127,14 +127,14 @@ jobs:
           current_openapi = config.get('openapi', [])
           if isinstance(current_openapi, str):
               # Convert single string to array
-              config['openapi'] = [current_openapi, 'api-reference/openapi-todo.json']
+              config['openapi'] = [current_openapi, 'api-reference/openapi.json']
           elif isinstance(current_openapi, list):
               # Add our spec if not already there
-              if 'api-reference/openapi-todo.json' not in current_openapi:
-                  config['openapi'] = current_openapi + ['api-reference/openapi-todo.json']
+              if 'api-reference/openapi.json' not in current_openapi:
+                  config['openapi'] = current_openapi + ['api-reference/openapi.json']
           else:
               # No openapi config yet
-              config['openapi'] = ['api-reference/openapi.json', 'api-reference/openapi-todo.json']
+              config['openapi'] = ['api-reference/openapi.json', 'api-reference/openapi.json']
           
           # Find or create API reference tab
           api_tab = None
