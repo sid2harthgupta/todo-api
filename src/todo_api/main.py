@@ -9,7 +9,7 @@ class Todo(BaseModel):
 
 @app.get("/todos/{todo_id}")
 def get_todo(todo_id: int):
-    """Retrieve a to-do by its ID"""
+    """Retrieve a to-do by its ID."""
     return {"id": todo_id, "title": "Test 7"}
 
 @app.post("/todos")
